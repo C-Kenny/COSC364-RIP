@@ -12,61 +12,66 @@ class ByteArray(object):
   def set_pointer(self, pointer):
     self.pointer = pointer
     
-  def pointer(self):
+  def get_pointer(self):
     return self.pointer
     
   def set_data(self, data):
     self.data = data
   
-  def data(self):
+  def get_data(self):
     return self.data
     
   def insert_byte(self, byte):
-    bytes = byte.to_byte(1, byteorder='big')
-    self.data.append(bytes)
+    assert byte >= 0 and byte < 256
+    bytes = byte.to_bytes(1, byteorder='big')
+    self.data.extend(bytes)
   
   def insert_word(self, word):
-    bytes = word.to_byte(2, byteorder='big')
-    self.data.append(bytes)
+    assert word >= 0 and word < 65536
+    bytes = word.to_bytes(2, byteorder='big')
+    self.data.extend(bytes)
   
   def insert_dword(self, dword):
-    bytes = dword.to_byte(4, byteorder='big')
-    self.data.append(bytes)
+    assert dword >= 0 and dword < 4294967296
+    bytes = dword.to_bytes(4, byteorder='big')
+    self.data.extend(bytes)
   
-  def peek_byte():
-    bytes = self.data[self.pointer]
+  def peek_byte(self, offset=0):
+    bytes = self.data[self.pointer + offset]
     return int.from_bytes(bytes, byteorder='big')
   
-  def peek_word():
-    bytes = self.data[self.pointer:self.pointer+1]
+  def peek_word(self, offset=0):
+    index = self.pointer + offset
+    bytes = self.data[index:index + 1]
     return int.from_bytes(bytes, byteorder='big')
   
-  def peek_dword():
-    bytes = self.data[self.pointer:self.pointer+3]
+  def peek_dword(self, offset=0):
+    index = self.pointer + offset
+    bytes = self.data[index:index + 3]
     return int.from_bytes(bytes, byteorder='big')
   
-  def get_byte():
+  def get_byte(self):
     byte = self.peek_byte()
     self.pointer += 1
     return byte
   
-  def get_word():
+  def get_word(self):
     word = self.peek_word()
     self.pointer += 2
     return word
   
-  def get_dword():
+  def get_dword(self):
     dword = self.peek_dword()
     self.pointer += 4
     return dword
 
 def build_packet(command, entries, version=2):
-  // (Byte) Command 
-  // (Byte) Version
-  // (Word) Padding 0x0
-  // (Void) Entries (20 bytes, 1-25 entries)
+  # (Byte) Command 
+  # (Byte) Version
+  # (Word) Padding 0x0
+  # (Void) Entries (20 bytes, 1-25 entries)
   packet = ByteArray()
-  packet.insert_byte(command)
+  packet.insert_byte(command.value)
   packet.insert_byte(version)
   packet.insert_word(0)
   
@@ -79,3 +84,8 @@ def build_packet(command, entries, version=2):
     packet.insert_dword(item["metric"]) # 1-15 inclusive, or 16 (infinity)
     
   return packet
+
+entries = []
+entries.append({"afi": 2, "address": 12, "metric": 16})
+x = build_packet(Command.request, entries)
+print(x.get_data())
