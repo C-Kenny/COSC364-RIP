@@ -5,8 +5,11 @@ class Command(Enum):
   response = 2
 
 class ByteArray(object):
-  def __init__(self):
-    self.data = []
+  def __init__(self, data=None):
+    if (data is None):
+      self.data = []
+    else:
+      self.data = data
     self.pointer = 0
     
   def set_pointer(self, pointer):
@@ -37,17 +40,18 @@ class ByteArray(object):
     self.data.extend(bytes)
   
   def peek_byte(self, offset=0):
-    bytes = self.data[self.pointer + offset]
+    byte = self.data[self.pointer + offset]
+    bytes = [byte]
     return int.from_bytes(bytes, byteorder='big')
   
   def peek_word(self, offset=0):
     index = self.pointer + offset
-    bytes = self.data[index:index + 1]
+    bytes = self.data[index:index + 2]
     return int.from_bytes(bytes, byteorder='big')
   
   def peek_dword(self, offset=0):
     index = self.pointer + offset
-    bytes = self.data[index:index + 3]
+    bytes = self.data[index:index + 4]
     return int.from_bytes(bytes, byteorder='big')
   
   def get_byte(self):
@@ -84,8 +88,3 @@ def build_packet(command, entries, version=2):
     packet.insert_dword(item["metric"]) # 1-15 inclusive, or 16 (infinity)
     
   return packet
-
-entries = []
-entries.append({"afi": 2, "address": 12, "metric": 16})
-x = build_packet(Command.request, entries)
-print(x.get_data())
