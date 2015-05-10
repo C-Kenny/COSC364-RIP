@@ -44,6 +44,11 @@ class Router(object):
       last_updated = time.time() # Current time (in seconds)
       self.neighbors[router_id] = [port, metric, last_updated]
     
+    # Load entry for self
+    router_id = self.config["router-id"]
+    route = Route(router_id, router_id, 0)
+    self.routes[router_id] = route
+    
     self._start_timer()
     
   def get_neighbor_port(self, router_id):
@@ -126,7 +131,7 @@ class Router(object):
     NEIGHBOR_TIMEOUT = 30.0
         
     # Handle updates
-    #TODO: Handle updates from sockets
+    #TODO: Handle incoming responses from other routers
     
     # Check for non-responsive neighbors
     now = time.time()
@@ -135,6 +140,10 @@ class Router(object):
       if last + NEIGHBOR_TIMEOUT < now and self.get_neighbor_metric(router_id) < 16:
         print("Router #" + str(router_id) + " has not responded. Setting metric to 16...")
         self.neighbors[router_id][1] = 16
+        
+        
+    # Handle requests
+    #TODO: Handle incoming requests from other routers
         
     # Request update
     for router_id in self.neighbors.keys():
