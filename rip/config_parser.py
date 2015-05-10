@@ -49,20 +49,3 @@ def parse_config(config):
     config_dict['outputs'] = outputs
 
     return config_dict if port_count == len(ports) else None
-
-
-def main():
-    if len(sys.argv) < 2:
-        sys.exit("No file given")
-
-    config = configparser.ConfigParser()
-    config.read(sys.argv[1])
-    config_dict = parse_config(config)
-
-    if not config_dict:
-        sys.exit("Invalid config file. Exiting...")
-    print("Config_dict: ", config_dict)
-
-if __name__ == "__main__":
-    main()
-
