@@ -9,12 +9,14 @@ Prog:   Parses router config (.ini) and provides basic error checking
 """
 
 
-def parse_config(config):
+def parse_config(config_file):
     """
     :param config: ConfigParser() object
     :return dict: Contains: router-id, input-ports and outputs
     """
     config_dict = {}
+    config = configparser.ConfigParser()
+    config.read(config_file)
 
     router_id = int(config['ROUTER']['router-id'])
 
@@ -55,14 +57,14 @@ def main():
     if len(sys.argv) < 2:
         sys.exit("No file given")
 
-    config = configparser.ConfigParser()
-    config.read(sys.argv[1])
-    config_dict = parse_config(config)
+    #config_dict = parse_config(config)
+    config_dict = parse_config(sys.argv[1])
 
     if not config_dict:
         sys.exit("Invalid config file. Exiting...")
     print("Config_dict: ", config_dict)
 
 if __name__ == "__main__":
+    """ If ran as standalone (directly invoked), run main """
     main()
 
