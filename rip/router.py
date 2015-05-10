@@ -5,15 +5,7 @@ import packet
 
 class Route(object):
   MIN_HOPS = 0
-  MAX_HOPS = 16
-  
-  @staticmethod
-  def int2ip(addr):                                                               
-    return socket.inet_ntoa(struct.pack("!I", addr))
-  
-  @staticmethod
-  def ip2int(addr):                                                               
-    return struct.unpack("!I", socket.inet_aton(addr))[0]   
+  MAX_HOPS = 16 
   
   def __init__(self, address=None, next_address=None, hops=0, afi=2):
     self.address = address            # Destination address
@@ -65,7 +57,6 @@ class Router(object):
     
   def set_neighbor_updated(self, router_id):
     self.neighbors[router_id][2] = time.time()
-    
     # Reset metric to known value if updated and metric >= 16
     if (self.get_neighbor_metric(router_id) >= 16):
       outputs = self.config["outputs"]
@@ -115,50 +106,49 @@ class Router(object):
       r = Route(address, from_id, hops, afi)
       self.incoming_route(r)
       
-    # update finished
-  
-  def _incoming_update_test(self):
-    from_address = 1
-    to_address = 2
-    entries = []
-    entries.append({"afi": 2, "address": to_address, "metric": randint(1, 16)})
-    data = packet.build_packet(packet.Command.response, entries)
-    self.incoming_update(from_address, data.get_data())
+  def request_update(self, to_id):
+    data = packet.build_packet(packet.Command.request, [])
+    #TODO: Send on clients port with the data
+    pass
     
-    if (self.get_neighbor_metric(4) >= 16):
-      from_address = 4
-      to_address = 2
-      entries = []
-      entries.append({"afi": 2, "address": to_address, "metric": randint(1, 16)})
-      data = packet.build_packet(packet.Command.response, entries)
-      self.incoming_update(from_address, data.get_data())
+  def request_full_table(self, to_id):
+    #TODO: Work out how this works (AF = 0, Metric = 16)
+    pass
   
   def _start_timer(self):
-    self.timer = Timer(1.0, Router.tick, args=[self])
+    self.timer = Timer(5.0, Router.tick, args=[self])
     self.timer.start()
   
   # Tick!
   def tick(self):
     self._start_timer()
     
+    NEIGHBOR_TIMEOUT = 30.0
+        
+    # Handle updates
+    #TODO: Handle updates from sockets
+    
     # Check for non-responsive neighbors
     now = time.time()
     for router_id in self.neighbors.keys():
       last = self.get_neighbor_updated(router_id)
-      if last + 5.0 < now and self.get_neighbor_metric(router_id) < 16:
+      if last + NEIGHBOR_TIMEOUT < now and self.get_neighbor_metric(router_id) < 16:
         print("Router #" + str(router_id) + " has not responded. Setting metric to 16...")
         self.neighbors[router_id][1] = 16
+        
+    # Request update
+    for router_id in self.neighbors.keys():
+      if (self.get_neighbor_metric(router_id) >= 16):
+        continue
+      self.request_update(router_id)
     
-    self._incoming_update_test()
-    
-#  def send_update(self, r):
-#    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-#    sock.connect((r.address, 520)) # a random port for now
-#    p = r.build_update()
-#    print(p)
-#    
-#  def build_update(self):
+#    self._incoming_update_test()
+
+
+#    def _incoming_update_test(self):
+#    from_address = 1
+#    to_address = 2
 #    entries = []
-#    for route in self.routes:
-#        entries.append({"afi": route.afi, "address": Route.ip2int(route.next_address), "metric": route.hops})
-#    return packet.build_packet(packet.Command.response, entries)
+#    entries.append({"afi": 2, "address": to_address, "metric": randint(1, 16)})
+#    data = packet.build_packet(packet.Command.response, entries)
+#    self.incoming_update(from_address, data.get_data())
