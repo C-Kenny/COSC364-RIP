@@ -14,9 +14,8 @@ def main():
 
     if not config_dict:
         sys.exit("Invalid config file. Exiting...")
-    print("Config_dict: ", config_dict)
-    print("Starting!")
-    x = Router()
+    print("Loaded config file. Starting router...")
+    x = Router(config_dict)
 
 if __name__ == "__main__":
     main()
