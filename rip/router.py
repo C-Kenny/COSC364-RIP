@@ -61,7 +61,7 @@ class Router(object):
   
   # Tick!
   def tick(self):
-    r = Route("0.0.0.0", 0, "0.0.0.0", Route.MAX_HOPS)
+    r = Route("127.0.0.1", 0, "127.0.0.1", Route.MAX_HOPS)
     self.send_update(r)
     #self._start_timer()
     
@@ -70,14 +70,3 @@ class Router(object):
     sock.connect((r.address, 520)) # a random port for now
     p = r.build_request()
     print(p)
-
-
-def main():
-    # This is just to test, the "tick" message will be
-    # displayed even though the main thread is blocked
-    print("Starting!")
-    x = Router()
-    
-
-if __name__ == "__main__":
-    main()
