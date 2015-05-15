@@ -21,20 +21,37 @@ class Route(object):
     self.hops = hops                  # Distance to get to Destination address from Next address
     self.afi = afi                    # AFI
     self.next_cost = 1                # Cost to get to the next address
+    self.marked = False
+    self.marked_time = 0
+    
+  def mark(self):
+    self.marked = True
+    self.marked_time = time.time()
     
   def set_next_cost(self, cost):
     self.next_cost = cost
     
   def cost(self):
-    return self.hops + self.next_cost
+    c = self.hops + self.next_cost
+    if (c > 16): c = 16
+    return c
     
   def __repr__(self):
-    return "Route(dest:" + str(self.address) + ", next: " + str(self.next_address) + " (" + str(self.cost()) + "))"
+    marked_token = ""
+    if (self.marked):
+      marked_token = " [MARKED FOR DELETION at " + time.strftime("%X", time.localtime(self.marked_time)) + "]"
+    return "Route(dest:" + str(self.address) + ", next: " + str(self.next_address) + " (cost: " + str(self.cost()) + "))" + marked_token
 
+def if_failed(condition, message):
+  if (not bool(condition)):
+    print("Check Failed: " + str(message))
+    return True
+  return False
 
 class Router(object):
   TIMER_TICK = 5.0
   NEIGHBOR_TIMEOUT = 30.0
+  DELETION_TIMEOUT = 10.0
   # Initialization
   def __init__(self, config):
     self.routes = dict()
@@ -68,7 +85,6 @@ class Router(object):
     self.routes[router_id] = route
     
     # That's all, now we start!
-    
     self.print_table()
     
     self._start_timer()
@@ -100,33 +116,58 @@ class Router(object):
     if (route.address in self.routes.keys()):
       # We have that route in the table already
       old_route = self.routes[route.address]
-      if route.cost() < old_route.cost() or \
-          old_route.next_address == route.next_address:
+      
+      if old_route.next_address == route.next_address:
+        self.routes[route.address] = route
+      elif route.cost() < old_route.cost():
         # Store new value
         self.routes[route.address] = route
       else:
-        # New value is worse than previous, ignore
-        pass
-    else:
-      # The route is new
+        return
+    elif route.cost() < 16:
+      # The route is new, and under 16
       self.routes[route.address] = route
+    else:
+      # The route is new but is marked for deletion.
+      # Seems odd, our neighbors should get this anyway and if not then they won't have this route
+      # anyway, since we don't have it either
+      return
+    if route.cost() >= 16 and not route.marked and \
+         route.next_address != self.id and route.address != self.id:
+        route.mark()
+        # Force an update of all routers
+        self.update()
     
   def incoming_update(self, raw_data):
     # data is the data recieved
     data = packet.ByteArray(raw_data)
+    if if_failed(data.size() >= 6, "Recieved invalid packet of length " + str(data.size())):
+      return
+      
     command = data.get_byte()
+    if if_failed(command == 2, "Recieved RIPv2 request (expected only responses)"):
+      return
     version = data.get_byte()
+    if if_failed(version == 2, "Recieved RIPv1 or other message (expected RIPv2)"):
+      return
     from_id = data.get_word()
+    
+    if if_failed(from_id not in self.neighbors, "Recieved update from non-neighbor router"):
+      return
     
     self.set_neighbor_updated(from_id)
     
     while (not data.is_empty()):
-      afi = data.get_word() # AF_INET (2)
-      data.get_word()
-      address = data.get_dword() # IPv4
-      data.get_dword()
-      data.get_dword()
-      hops = data.get_dword() # 1-15 inclusive, or 16 (infinity)
+      afi = data.get_word()       # AF_INET (2)
+      if if_failed(afi == 2, "Recieved unknown AF_INET (expected 2)"):
+        return
+      data.get_word()             # (BLANK) should we check for this being 0? Probably not important.
+      address = data.get_dword()  # Router-ID
+      data.get_dword()            # (BLANK)
+      data.get_dword()            # (BLANK)
+      hops = data.get_dword()     # 1-15 inclusive, or 16 (infinity)
+      if if_failed(0 < hops <= 16, "Recieved invalid hop count (setting to 16)"):
+        hops = 16
       
       r = Route(address, from_id, hops, afi)
       self.incoming_route(r)
@@ -138,30 +179,33 @@ class Router(object):
     self.timer.start()
     
   def print_table(self):
-    print("Routing Table:")
+    now = time.strftime("%X")
+    print("[" + str(now) + "] Routing Table:")
     for route_id in self.routes.keys():
       route = self.routes[route_id]
-      print("\t", route)
+      print("\t\t", route)
     
   def send_updates(self):
     for neighbor in self.neighbors.keys():
         if (self.get_neighbor_metric(neighbor) < 16):
           self.send_update_to_router(neighbor)
-    self.print_table()
     
           
   def send_update_to_router(self, router_id):
     # Sends a specialized update message to a neighbor using split-horizon poisoning
+    # Skip sending updates to self
+    if (router_id == self.id):
+      return
     entries = []
     for route_id in self.routes.keys():
       route = self.routes[route_id]
       new_metric = route.cost()
-      if (route.address == router_id):
-        # we don't need to send an update for the router itself...
-        continue
-      elif (route.next_address == router_id):
+      if (route.address == router_id or route.next_address == router_id):
         # Split-horizon poisoning
         new_metric = 16
+        
+        # Skip marked messages from contacting the router who sent us the deletion message
+        if (route.marked): continue
         
       entries.append({"afi": 2, "address": route.address, "metric": new_metric})
       
@@ -170,10 +214,7 @@ class Router(object):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.sendto(bytes(data), ("localhost", port))
   
-  # Tick!
-  def tick(self):
-    self._start_timer()
-    
+  def update(self):
     # Check for non-responsive neighbors
     now = time.time()
     for router_id in self.neighbors.keys():
@@ -181,7 +222,8 @@ class Router(object):
       if last + Router.NEIGHBOR_TIMEOUT < now and self.get_neighbor_metric(router_id) < 16:
         print("Router #" + str(router_id) + " has not responded. Setting metric to 16...")
         self.neighbors[router_id][1] = 16
-    
+        
+    # Check for marked routes ready for deletion
     # Update inaccessible routes with 16
     for route_id in self.routes.keys():
       route = self.routes[route_id]
@@ -190,21 +232,40 @@ class Router(object):
         # If it's a neighbor, check to see if our internal metric is 16.
         # If it is, replace our "route" metrics with 16
         route.next_cost = 16
+        # Mark for deletion in a little bit...
+        if (not route.marked): route.mark()
+        
+      if (route.marked and route.marked_time + Router.DELETION_TIMEOUT < now):
+        print("Deleting marked route " + str(route) + " as inaccessible")
+        self.routes[route_id] = None
+      
+    self.routes = { k : v for k,v in self.routes.items() if v is not None }
         
     # If it's time, send an update ourselves (this handles a metric of 16 for the above!)
     self.send_updates()
+    self.print_table()
+  
+  # Tick!
+  def tick(self):
+    self._start_timer()
+    
+    self.update()
 
   def build_packet(self, sender_id, entries, command=2, version=2):
     # (Byte) Command 
     # (Byte) Version
-    # (Word) Padding 0x0
-    # (Void) Entries (20 bytes, 1-25 entries)
+    # (Word) Padding 0x0 (or Sender-ID in COSC364's case)
+    # (Void) Entries (20 bytes each, 1-25 entries)
     datagram = packet.ByteArray()
     datagram.insert_byte(command)
     datagram.insert_byte(version)
     
     # COSC364 special: Use the sending router-id here
     datagram.insert_word(sender_id)
+    
+    # Should we try and limit entries to 25?
+    if if_failed(len(entries) > 25, "Recieved invalid entries count (larger than 25)"):
+      return datagram
     
     for i, item in enumerate(entries):
       datagram.insert_word(item["afi"]) # AF_INET (2)
