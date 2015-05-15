@@ -9,6 +9,9 @@ class ByteArray(object):
   def is_empty(self):
     return (len(self.data) - self.pointer) <= 0
     
+  def size(self):
+    return (len(self.data) - self.pointer)
+    
   def __str__(self):
     return "".join(format(x, '02x') for x in self.data)
     
