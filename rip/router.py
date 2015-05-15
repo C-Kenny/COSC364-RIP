@@ -5,7 +5,7 @@ import packet
 
 class ThreadedUDPRequestHandler(socketserver.BaseRequestHandler):
     def handle(self):
-        data = self.request[0].strip()
+        data = self.request[0]
         self.server.router.incoming_update(data)
 
 class ThreadedUDPServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
@@ -66,6 +66,8 @@ class Router(object):
     
     # That's all, now we start!
     
+    self.print_table()
+    
     self._start_timer()
     
   def get_neighbor_port(self, router_id):
@@ -90,8 +92,6 @@ class Router(object):
   def incoming_route(self, route):
     cost = self.get_neighbor_metric(route.next_address)
     route.set_next_cost(cost)
-    
-    print("New route: " + str(route) + "(me -> them costs " + str(cost) + ")")
     
     # Check if we have this route already
     if (route.address in self.routes.keys()):
@@ -133,10 +133,18 @@ class Router(object):
     self.timer = Timer(5.0, Router.tick, args=[self])
     self.timer.start()
     
+  def print_table(self):
+    print("Routing Table:")
+    for route_id in self.routes.keys():
+      route = self.routes[route_id]
+      print("\t", route)
+    
   def send_updates(self):
     for neighbor in self.neighbors.keys():
         if (self.get_neighbor_metric(neighbor) < 16):
           self.send_update_to_router(neighbor)
+    self.print_table()
+    
           
   def send_update_to_router(self, router_id):
     # Sends a specialized update message to a neighbor using split-horizon poisoning
