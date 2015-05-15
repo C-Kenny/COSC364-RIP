@@ -44,14 +44,14 @@ class Route(object):
 
 def if_failed(condition, message):
   if (not bool(condition)):
-    print("Check Failed: " + str(message))
+    print("[WARNING] Check Failed: " + str(message))
     return True
   return False
 
 class Router(object):
   TIMER_TICK = 5.0
   NEIGHBOR_TIMEOUT = 30.0
-  DELETION_TIMEOUT = 10.0
+  DELETION_TIMEOUT = 7.5
   # Initialization
   def __init__(self, config):
     self.routes = dict()
@@ -119,7 +119,9 @@ class Router(object):
       old_route = self.routes[route.address]
       
       if old_route.next_address == route.next_address:
-        self.routes[route.address] = route
+        # Sanity check, if it's marked we already know it's unreachable
+        if (route.cost() != old_route.cost()):
+          self.routes[route.address] = route
       elif route.cost() < old_route.cost():
         # Store new value
         self.routes[route.address] = route
@@ -142,7 +144,7 @@ class Router(object):
   def incoming_update(self, raw_data):
     # data is the data recieved
     data = packet.ByteArray(raw_data)
-    if if_failed(data.size() >= 6, "Recieved invalid packet of length " + str(data.size())):
+    if if_failed(data.size() >= 4, "Recieved invalid packet of length " + str(data.size())):
       return
       
     command = data.get_byte()
@@ -153,7 +155,7 @@ class Router(object):
       return
     from_id = data.get_word()
     
-    if if_failed(from_id not in self.neighbors, "Recieved update from non-neighbor router"):
+    if if_failed(from_id in self.neighbors, "Recieved update from non-neighbor router"):
       return
     
     self.set_neighbor_updated(from_id)
@@ -167,7 +169,7 @@ class Router(object):
       data.get_dword()            # (BLANK)
       data.get_dword()            # (BLANK)
       hops = data.get_dword()     # 1-15 inclusive, or 16 (infinity)
-      if if_failed(0 < hops <= 16, "Recieved invalid hop count (setting to 16)"):
+      if if_failed(0 <= hops <= 16, "Recieved invalid hop count (setting to 16)"):
         hops = 16
       
       r = Route(address, from_id, hops, afi)
@@ -181,7 +183,7 @@ class Router(object):
     
   def print_table(self):
     now = time.strftime("%X")
-    print("[{}]Routing Table for {}".format(str(now), self.router_id))
+    print("[{}] Routing Table for {}".format(str(now), self.router_id))
     for route_id in self.routes.keys():
       route = self.routes[route_id]
       print("\t\t", route)
@@ -234,7 +236,9 @@ class Router(object):
         # If it is, replace our "route" metrics with 16
         route.next_cost = 16
         # Mark for deletion in a little bit...
-        if (not route.marked): route.mark()
+        if (not route.marked): 
+          print("Marking route to " + str(route.address) + " for deletion (neighbor metric is 16)")
+          route.mark()
         
       if (route.marked and route.marked_time + Router.DELETION_TIMEOUT < now):
         print("Deleting marked route " + str(route) + " as inaccessible")
@@ -265,7 +269,7 @@ class Router(object):
     datagram.insert_word(sender_id)
     
     # Should we try and limit entries to 25?
-    if if_failed(len(entries) > 25, "Recieved invalid entries count (larger than 25)"):
+    if if_failed(len(entries) <= 25, "Recieved invalid entries count (larger than 25)"):
       return datagram
     
     for i, item in enumerate(entries):
