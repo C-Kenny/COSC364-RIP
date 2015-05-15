@@ -9,6 +9,7 @@ class ThreadedUDPRequestHandler(socketserver.BaseRequestHandler):
         self.server.router.incoming_update(data)
 
 class ThreadedUDPServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
+    """ Overrides original handler """
     pass
 
 class Route(object):
@@ -16,6 +17,13 @@ class Route(object):
   MAX_HOPS = 16 
   
   def __init__(self, address=None, next_address=None, hops=0, afi=2):
+    """ 
+    Initialize the Route class. Default paramaters are provided, if not set.
+    :param address
+    :param next_address
+    :param hops int
+    :param afi int
+    """
     self.address = address            # Destination address
     self.next_address = next_address  # The next address (usually who we recieved info from)
     self.hops = hops                  # Distance to get to Destination address from Next address
@@ -37,12 +45,22 @@ class Route(object):
     return c
     
   def __repr__(self):
+    """
+    Provides the string representation of the class, to be used if directly
+    printed, e.g. print(Route).
+    """
     marked_token = ""
     if (self.marked):
       marked_token = " [MARKED FOR DELETION at " + time.strftime("%X", time.localtime(self.marked_time)) + "]"
     return "Route(dest:" + str(self.address) + ", next: " + str(self.next_address) + " (cost: " + str(self.cost()) + "))" + marked_token
 
+
 def if_failed(condition, message):
+  """
+  :param condition  bool
+  :param message    str
+  """
+  
   if (not bool(condition)):
     print("[WARNING] Check Failed: " + str(message))
     return True
@@ -52,8 +70,9 @@ class Router(object):
   TIMER_TICK = 5.0
   NEIGHBOR_TIMEOUT = 30.0
   DELETION_TIMEOUT = 7.5
-  # Initialization
+
   def __init__(self, config):
+    """ Initialize the Router class. Config param required """
     self.routes = dict()
     self.config = config
     
@@ -62,6 +81,7 @@ class Router(object):
     
     self.neighbors = dict()
     outputs = self.config["outputs"]
+
     for output in outputs:
       port = output[0]
       metric = output[1]
@@ -70,14 +90,14 @@ class Router(object):
       self.neighbors[router_id] = [port, metric, last_updated]
       
     for port in self.config["input-ports"]:
-      server = ThreadedUDPServer(("localhost", port), ThreadedUDPRequestHandler)
+      server = ThreadedUDPServer(("localhost", port), ThreadedUDPRequestHandler)  # 127.0.0.1
       server.router = self
       server_thread = Thread(target=server.serve_forever)
       server_thread.daemon = True
       server_thread.start()
       print("Listening on port " + str(port) + " for datagrams...")
     
-    # Load entry for self
+    # Load entry for self and initialize metric to 0
     router_id = self.config["router-id"]
     self.router_id = self.config["router-id"]
     route = Route(router_id, router_id, 0)
@@ -87,7 +107,6 @@ class Router(object):
     
     # That's all, now we start!
     self.print_table()
-    
     self._start_timer()
     
   def get_neighbor_port(self, router_id):
@@ -100,8 +119,13 @@ class Router(object):
     return self.neighbors[router_id][2] # last_updated
     
   def set_neighbor_updated(self, router_id):
+    """
+    Resets metric to known value if update and metric >= 16
+    :param router_id int
+    :return void
+    """
     self.neighbors[router_id][2] = time.time()
-    # Reset metric to known value if updated and metric >= 16
+
     if (self.get_neighbor_metric(router_id) >= 16):
       outputs = self.config["outputs"]
       for output in outputs:
@@ -110,6 +134,11 @@ class Router(object):
           break
     
   def incoming_route(self, route):
+    """
+    Adjust routes depending on cost of incoming route and whether we already know the route
+    :param route
+    :return void
+    """
     cost = self.get_neighbor_metric(route.next_address)
     route.set_next_cost(cost)
     
@@ -122,19 +151,23 @@ class Router(object):
         # Sanity check, if it's marked we already know it's unreachable
         if (route.cost() != old_route.cost()):
           self.routes[route.address] = route
+
       elif route.cost() < old_route.cost():
         # Store new value
         self.routes[route.address] = route
       else:
         return
+
     elif route.cost() < 16:
       # The route is new, and under 16
       self.routes[route.address] = route
+
     else:
       # The route is new but is marked for deletion.
       # Seems odd, our neighbors should get this anyway and if not then they won't have this route
       # anyway, since we don't have it either
       return
+
     if route.cost() >= 16 and not route.marked and \
          route.next_address != self.id and route.address != self.id:
         route.mark()
@@ -142,7 +175,10 @@ class Router(object):
         self.update()
     
   def incoming_update(self, raw_data):
-    # data is the data recieved
+    """
+    Provides checks of packet length, version, command and non-neighbors 
+    :param raw_data data received (bytes)
+    """
     data = packet.ByteArray(raw_data)
     if if_failed(data.size() >= 4, "Recieved invalid packet of length " + str(data.size())):
       return
@@ -182,6 +218,9 @@ class Router(object):
     self.timer.start()
     
   def print_table(self):
+    """
+    Prints a human readable representation of the routes in routing table
+    """
     now = time.strftime("%X")
     print("[{}] Routing Table for {}".format(str(now), self.router_id))
     for route_id in self.routes.keys():
@@ -218,7 +257,11 @@ class Router(object):
     sock.sendto(bytes(data), ("localhost", port))
   
   def update(self):
-    # Check for non-responsive neighbors
+    """ 
+    Check for non-responsive neighbors 
+    :return void
+    """
+
     now = time.time()
     for router_id in self.neighbors.keys():
       last = self.get_neighbor_updated(router_id)
@@ -250,10 +293,8 @@ class Router(object):
     self.send_updates()
     self.print_table()
   
-  # Tick!
   def tick(self):
     self._start_timer()
-    
     self.update()
 
   def build_packet(self, sender_id, entries, command=2, version=2):
@@ -268,7 +309,7 @@ class Router(object):
     # COSC364 special: Use the sending router-id here
     datagram.insert_word(sender_id)
     
-    # Should we try and limit entries to 25?
+    # Limited entries to 25?
     if if_failed(len(entries) <= 25, "Recieved invalid entries count (larger than 25)"):
       return datagram
     
