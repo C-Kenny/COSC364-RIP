@@ -1,9 +1,3 @@
-from enum import Enum
-
-class Command(Enum):
-  request = 1
-  response = 2
-
 class ByteArray(object):
   def __init__(self, data=None):
     if (data is None):
@@ -74,23 +68,3 @@ class ByteArray(object):
     dword = self.peek_dword()
     self.pointer += 4
     return dword
-
-def build_packet(command, entries, version=2):
-  # (Byte) Command 
-  # (Byte) Version
-  # (Word) Padding 0x0
-  # (Void) Entries (20 bytes, 1-25 entries)
-  packet = ByteArray()
-  packet.insert_byte(command.value)
-  packet.insert_byte(version)
-  packet.insert_word(0)
-  
-  for i, item in enumerate(entries):
-    packet.insert_word(item["afi"]) # AF_INET (2)
-    packet.insert_word(0)
-    packet.insert_dword(item["address"]) # IPv4
-    packet.insert_dword(0)
-    packet.insert_dword(0)
-    packet.insert_dword(item["metric"]) # 1-15 inclusive, or 16 (infinity)
-    
-  return packet

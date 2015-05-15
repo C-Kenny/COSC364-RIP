@@ -1,7 +1,15 @@
-from threading import Timer
+from threading import Timer, Thread
 import time, struct, socket
-from random import randint
+import socketserver
 import packet
+
+class ThreadedUDPRequestHandler(socketserver.BaseRequestHandler):
+    def handle(self):
+        data = self.request[0].strip()
+        self.server.router.incoming_update(data)
+
+class ThreadedUDPServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
+    pass
 
 class Route(object):
   MIN_HOPS = 0
@@ -9,10 +17,10 @@ class Route(object):
   
   def __init__(self, address=None, next_address=None, hops=0, afi=2):
     self.address = address            # Destination address
-    self.next_address = next_address  # The next address (who we recieved info from)
+    self.next_address = next_address  # The next address (usually who we recieved info from)
     self.hops = hops                  # Distance to get to Destination address from Next address
     self.afi = afi                    # AFI
-    self.next_cost = 1                     # Cost to get to the next address
+    self.next_cost = 1                # Cost to get to the next address
     
   def set_next_cost(self, cost):
     self.next_cost = cost
@@ -23,12 +31,10 @@ class Route(object):
   def __repr__(self):
     return "Route(dest:" + str(self.address) + ", next: " + str(self.next_address) + " (" + str(self.cost()) + "))"
 
-  
-# A quick test class, could be made into our actual object?
+
 class Router(object):
   # Initialization
   def __init__(self, config):
-    #self.timer = None
     self.routes = dict()
     self.config = config
     
@@ -43,11 +49,22 @@ class Router(object):
       router_id = output[2]
       last_updated = time.time() # Current time (in seconds)
       self.neighbors[router_id] = [port, metric, last_updated]
+      
+    for port in self.config["input-ports"]:
+      server = ThreadedUDPServer(("localhost", port), ThreadedUDPRequestHandler)
+      server.router = self
+      server_thread = Thread(target=server.serve_forever)
+      server_thread.daemon = True
+      server_thread.start()
+      print("Listening on port " + str(port) + " for datagrams...")
     
     # Load entry for self
     router_id = self.config["router-id"]
     route = Route(router_id, router_id, 0)
+    self.id = router_id
     self.routes[router_id] = route
+    
+    # That's all, now we start!
     
     self._start_timer()
     
@@ -84,7 +101,6 @@ class Router(object):
           old_route.next_address == route.next_address:
         # Store new value
         self.routes[route.address] = route
-        print("\tRoute is better or more recent than the one stored, updating...")
       else:
         # New value is worse than previous, ignore
         pass
@@ -92,14 +108,15 @@ class Router(object):
       # The route is new
       self.routes[route.address] = route
     
-  def incoming_update(self, from_id, raw_data):
-    # from_id is who sent the update
-    self.set_neighbor_updated(from_id)
+  def incoming_update(self, raw_data):
     # data is the data recieved
     data = packet.ByteArray(raw_data)
     command = data.get_byte()
     version = data.get_byte()
-    data.get_word()
+    from_id = data.get_word()
+    
+    self.set_neighbor_updated(from_id)
+    
     while (not data.is_empty()):
       afi = data.get_word() # AF_INET (2)
       data.get_word()
@@ -111,27 +128,41 @@ class Router(object):
       r = Route(address, from_id, hops, afi)
       self.incoming_route(r)
       
-  def request_update(self, to_id):
-    data = packet.build_packet(packet.Command.request, [])
-    #TODO: Send on clients port with the data
-    pass
-    
-  def request_full_table(self, to_id):
-    #TODO: Work out how this works (AF = 0, Metric = 16)
-    pass
   
   def _start_timer(self):
     self.timer = Timer(5.0, Router.tick, args=[self])
     self.timer.start()
+    
+  def send_updates(self):
+    for neighbor in self.neighbors.keys():
+        if (self.get_neighbor_metric(neighbor) < 16):
+          self.send_update_to_router(neighbor)
+          
+  def send_update_to_router(self, router_id):
+    # Sends a specialized update message to a neighbor using split-horizon poisoning
+    entries = []
+    for route_id in self.routes.keys():
+      route = self.routes[route_id]
+      new_metric = route.cost()
+      if (route.address == router_id):
+        # we don't need to send an update for the router itself...
+        continue
+      if (route.next_address == router_id):
+        # Split-horizon poisoning
+        new_metric = 16
+        
+      entries.append({"afi": 2, "address": route.address, "metric": new_metric})
+      
+    data = self.build_packet(self.id, entries).get_data()
+    port = self.get_neighbor_port(router_id)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.sendto(bytes(data), ("localhost", port))
   
   # Tick!
   def tick(self):
     self._start_timer()
     
     NEIGHBOR_TIMEOUT = 30.0
-        
-    # Handle updates
-    #TODO: Handle incoming responses from other routers
     
     # Check for non-responsive neighbors
     now = time.time()
@@ -141,23 +172,27 @@ class Router(object):
         print("Router #" + str(router_id) + " has not responded. Setting metric to 16...")
         self.neighbors[router_id][1] = 16
         
-        
-    # Handle requests
-    #TODO: Handle incoming requests from other routers
-        
-    # Request update
-    for router_id in self.neighbors.keys():
-      if (self.get_neighbor_metric(router_id) >= 16):
-        continue
-      self.request_update(router_id)
+    # If it's time, send an update ourselves (this handles a metric of 16 for the above!)
+    self.send_updates()
+
+  def build_packet(self, sender_id, entries, command=2, version=2):
+    # (Byte) Command 
+    # (Byte) Version
+    # (Word) Padding 0x0
+    # (Void) Entries (20 bytes, 1-25 entries)
+    datagram = packet.ByteArray()
+    datagram.insert_byte(command)
+    datagram.insert_byte(version)
     
-#    self._incoming_update_test()
-
-
-#    def _incoming_update_test(self):
-#    from_address = 1
-#    to_address = 2
-#    entries = []
-#    entries.append({"afi": 2, "address": to_address, "metric": randint(1, 16)})
-#    data = packet.build_packet(packet.Command.response, entries)
-#    self.incoming_update(from_address, data.get_data())
+    # COSC364 special: Use the sending router-id here
+    datagram.insert_word(sender_id)
+    
+    for i, item in enumerate(entries):
+      datagram.insert_word(item["afi"]) # AF_INET (2)
+      datagram.insert_word(0)
+      datagram.insert_dword(item["address"]) # IPv4
+      datagram.insert_dword(0)
+      datagram.insert_dword(0)
+      datagram.insert_dword(item["metric"]) # 1-15 inclusive, or 16 (infinity)
+      
+    return datagram
