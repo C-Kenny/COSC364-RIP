@@ -1,5 +1,5 @@
 from threading import Timer, Thread
-import time, struct, socket
+import time, struct, socket, random
 import socketserver
 import packet
 
@@ -33,6 +33,8 @@ class Route(object):
 
 
 class Router(object):
+  TIMER_TICK = 5.0
+  NEIGHBOR_TIMEOUT = 30.0
   # Initialization
   def __init__(self, config):
     self.routes = dict()
@@ -61,6 +63,7 @@ class Router(object):
     # Load entry for self
     router_id = self.config["router-id"]
     route = Route(router_id, router_id, 0)
+    route.next_cost = 0
     self.id = router_id
     self.routes[router_id] = route
     
@@ -130,7 +133,8 @@ class Router(object):
       
   
   def _start_timer(self):
-    self.timer = Timer(5.0, Router.tick, args=[self])
+    delay = Router.TIMER_TICK * random.uniform(0.8, 1.2)
+    self.timer = Timer(delay, Router.tick, args=[self])
     self.timer.start()
     
   def print_table(self):
@@ -155,7 +159,7 @@ class Router(object):
       if (route.address == router_id):
         # we don't need to send an update for the router itself...
         continue
-      if (route.next_address == router_id):
+      elif (route.next_address == router_id):
         # Split-horizon poisoning
         new_metric = 16
         
@@ -170,15 +174,22 @@ class Router(object):
   def tick(self):
     self._start_timer()
     
-    NEIGHBOR_TIMEOUT = 30.0
-    
     # Check for non-responsive neighbors
     now = time.time()
     for router_id in self.neighbors.keys():
       last = self.get_neighbor_updated(router_id)
-      if last + NEIGHBOR_TIMEOUT < now and self.get_neighbor_metric(router_id) < 16:
+      if last + Router.NEIGHBOR_TIMEOUT < now and self.get_neighbor_metric(router_id) < 16:
         print("Router #" + str(router_id) + " has not responded. Setting metric to 16...")
         self.neighbors[router_id][1] = 16
+    
+    # Update inaccessible routes with 16
+    for route_id in self.routes.keys():
+      route = self.routes[route_id]
+      if (route.address in self.neighbors and self.get_neighbor_metric(route.address) >= 16 or \
+          route.next_address in self.neighbors and self.get_neighbor_metric(route.next_address) >= 16):
+        # If it's a neighbor, check to see if our internal metric is 16.
+        # If it is, replace our "route" metrics with 16
+        route.next_cost = 16
         
     # If it's time, send an update ourselves (this handles a metric of 16 for the above!)
     self.send_updates()
