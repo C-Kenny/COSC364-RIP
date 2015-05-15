@@ -79,6 +79,7 @@ class Router(object):
     
     # Load entry for self
     router_id = self.config["router-id"]
+    self.router_id = self.config["router-id"]
     route = Route(router_id, router_id, 0)
     route.next_cost = 0
     self.id = router_id
@@ -180,7 +181,7 @@ class Router(object):
     
   def print_table(self):
     now = time.strftime("%X")
-    print("[" + str(now) + "] Routing Table:")
+    print("[{}]Routing Table for {}".format(str(now), self.router_id))
     for route_id in self.routes.keys():
       route = self.routes[route_id]
       print("\t\t", route)
